@@ -19,6 +19,14 @@
 
 ![Companion Mac 应用首页](docs/images/companion-mac.png)
 
+<div align="center">
+
+<img src="docs/images/companion-iphone.jpg" width="320" alt="Companion iPhone 应用首页：附近连接已建立" />
+
+*iPhone · 连接自己的 Mac，打开自己的应用。*
+
+</div>
+
 ## 为什么做 Companion
 
 随着个人 coding 越来越普遍，每个人的电脑上都会出现越来越多为自己写的应用：一个研究助手、一套文件整理工具、一个本地 AI 服务，或者一个记录生活的小程序。
