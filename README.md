@@ -27,6 +27,14 @@
 
 > 当前版本提供原生 Mac / iPhone 应用宿主、共享配对和加密连接，首个内置应用是 Quenda。摄像头、录音能力接口、动态应用安装和应用市场仍在规划中。
 
+## 看它如何工作
+
+打开 Quenda，发送任务，在手机确认工具权限，接收 Mac 上独立 Gateway 的返回结果。
+
+<img src="docs/images/companion-flow.gif" width="760" alt="Quenda 流程示意：打开应用、发送任务、确认权限、查看结果" />
+
+*已有交互能力的流程示意，非实际界面录屏。*
+
 ## 现在可以做什么
 
 | 能力 | 当前实现 |
@@ -132,6 +140,34 @@ scripts/install-iphone.sh YOUR_TEAM_ID
 Mac 发布应用目录不会自动为旧 iPhone 客户端安装新界面。独立应用包与运行时安装将是后续工作的重点。
 
 [阅读应用接入结构 →](docs/application-architecture.md)
+
+## 可以长出什么应用？
+
+下面是基于平台方向的应用构想，**尚未实现**。摄像头、录音、文件传输与对应本地服务仍需接入；动画展示目标流程。
+
+### 拍照票据夹
+
+手机拍摄票据，Mac 使用本地 OCR 提取金额和分类、保存文件，手机查看归档结果。适合个人报销、消费记录与资料整理。
+
+<details>
+<summary>播放票据归档流程</summary>
+
+<img src="docs/images/idea-receipts.gif" width="760" alt="应用构想：手机拍摄票据，传到 Mac，本地识别归档，手机查看结果" />
+
+</details>
+
+### 语音灵感笔记
+
+手机录下一段想法，Mac 使用本地 ASR 转写，并可选用本地模型整理重点与待办，文本回到手机。
+
+<details>
+<summary>播放语音笔记流程</summary>
+
+<img src="docs/images/idea-voice.gif" width="760" alt="应用构想：手机录音，传到 Mac，本地转写整理，手机回看笔记" />
+
+</details>
+
+同样的协作方式还可以用于随身论文助手、家庭相册搜索、文件整理和个人自动化。应用决定业务，Companion 提供设备之间的底座。
 
 ## 路线图
 
