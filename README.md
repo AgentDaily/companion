@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Assets/Companion.png" width="112" alt="Companion" />
+<img src="Assets/Companion.png" width="72" alt="Companion" />
 
 # Companion
 
@@ -14,16 +14,6 @@
 ![Stage](https://img.shields.io/badge/status-early%20development-5B6EF5)
 
 [快速开始](docs/getting-started.md) · [应用接入](docs/application-architecture.md) · [连接协议](docs/connection-protocol.md)
-
-</div>
-
-![Companion Mac 应用首页](docs/images/companion-mac.png)
-
-<div align="center">
-
-<img src="docs/images/companion-iphone.jpg" width="320" alt="Companion iPhone 应用首页：附近连接已建立" />
-
-*iPhone · 连接自己的 Mac，打开自己的应用。*
 
 </div>
 
@@ -51,6 +41,23 @@
 
 附近连接也可能经过共同局域网；发现成功并不代表已验证无线点对点路径。Mac 需要保持运行和唤醒。
 
+## 两端界面
+
+<table>
+  <tr>
+    <th>Mac · 管理应用与本地连接</th>
+    <th>iPhone · 随身打开应用</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/companion-mac.png" width="420" alt="Mac 应用首页：管理应用与设备配对" /></td>
+    <td align="center"><img src="docs/images/companion-iphone.jpg" width="140" alt="iPhone 应用首页：附近连接已建立" /></td>
+  </tr>
+  <tr>
+    <td>向配对设备开放应用，统一管理连接。</td>
+    <td>连接自己的 Mac，进入 Quenda。</td>
+  </tr>
+</table>
+
 ## 两端如何协作
 
 ```mermaid
@@ -76,7 +83,7 @@ flowchart LR
 <details>
 <summary>查看 Quenda 的 Mac 入口</summary>
 
-![Quenda Mac 入口，已隐藏个人会话列表](docs/images/quenda-mac.png)
+<img src="docs/images/quenda-mac.png" width="520" alt="Quenda Mac 入口，已隐藏个人会话列表" />
 
 </details>
 
