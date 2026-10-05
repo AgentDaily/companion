@@ -97,9 +97,12 @@ final class ApplicationTests: XCTestCase {
         let pairing = try Pairing(host: "127.0.0.1", port: 1, key: key, nearbyService: UUID().uuidString)
         XCTAssertEqual(try Pairing(link: pairing.link), pairing)
         let link = CompanionLink(pairing: pairing) { _ in discoveries += 1; return endpoint }
+        var states: [CompanionConnectionState] = []
+        link.onState = { states.append($0) }
         defer { link.close() }
         try await link.connect(); _ = try await link.applications()
         XCTAssertEqual(link.state, .connected(.nearby)); XCTAssertEqual(discoveries, 1)
+        XCTAssertEqual(states, [.discovering, .connectingNearby, .connected(.nearby)])
     }
     @MainActor func testUnavailableNearbyFallsBackAndDoesNotReplayRequests() async throws {
         let key = try Pairing.newKey(), registry = ApplicationRegistry()

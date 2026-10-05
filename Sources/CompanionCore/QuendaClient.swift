@@ -42,6 +42,27 @@ import Foundation
     public func send(_ command: JSONValue) async throws {
         _ = try await request(RelayPacket(kind: "command", body: JSONEncoder().encode(command), sessionID: watchedID))
     }
+    public func sendUser(_ text: String, attachments: [OutgoingAttachment], progress: (Double) -> Void) async throws {
+        try AttachmentLimits.validate(attachments)
+        guard let id = watchedID else { throw CompanionError.disconnected }
+        if !attachments.isEmpty {
+            _ = try await request(RelayPacket(kind: "attachment_reset", sessionID: id))
+            let total = attachments.reduce(0) { $0 + $1.data.count }; var transferred = 0
+            for attachment in attachments {
+                let declaration: JSONValue = .object(["id": .string(attachment.id), "name": .string(attachment.name), "media_type": .string(attachment.mediaType), "size": .number(Double(attachment.data.count))])
+                _ = try await request(RelayPacket(kind: "attachment_begin", body: JSONEncoder().encode(declaration), sessionID: id))
+                for offset in stride(from: 0, to: attachment.data.count, by: AttachmentLimits.chunkBytes) {
+                    try Task.checkCancellation()
+                    guard watchedID == id else { throw CompanionError.disconnected }
+                    let end = min(offset + AttachmentLimits.chunkBytes, attachment.data.count)
+                    _ = try await request(RelayPacket(kind: "attachment_chunk", path: attachment.id, body: attachment.data.subdata(in: offset..<end), sessionID: id))
+                    transferred += end - offset; progress(Double(transferred) / Double(total))
+                }
+            }
+        }
+        guard watchedID == id else { throw CompanionError.disconnected }
+        try await send(.object(["type": .string("user_message"), "content": .string(text), "attachment_ids": .array(attachments.map { .string($0.id) })]))
+    }
     public func unwatch() async {
         eventReader?.cancel(); eventReader = nil
         eventContinuation?.finish(); eventContinuation = nil; watchedID = nil
@@ -93,6 +114,15 @@ import Foundation
         guard watchedID != nil, sessionID == nil || sessionID == watchedID else { throw CompanionError.server("会话已切换，请重新发送。") }
         if let relay { try await relay.send(command) }
         else { guard let socket else { throw CompanionError.disconnected }; try await socket.send(command) }
+    }
+    public func sendUser(_ text: String, attachments: [OutgoingAttachment], sessionID: String, progress: (Double) -> Void) async throws {
+        try AttachmentLimits.validate(attachments)
+        guard watchedID == sessionID else { throw CompanionError.disconnected }
+        if let relay { try await relay.sendUser(text, attachments: attachments, progress: progress) }
+        else {
+            try await send(.object(["type": .string("user_message"), "content": .string(text), "attachments": .array(attachments.map(\.payload))]), sessionID: sessionID)
+            progress(1)
+        }
     }
     public func unwatch() async { watchedID = nil; socket?.close(); socket = nil; await relay?.unwatch() }
     public func close() { watchedID = nil; socket?.close(); socket = nil; relay?.close() }

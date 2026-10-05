@@ -43,6 +43,7 @@ public struct ChatMessage: Codable, Identifiable, Sendable {
     public let id: String
     public let role: String
     public let content: String
+    public let attachments: [MessageAttachment]?
 }
 public struct MessagePage: Codable, Sendable {
     public let items: [ChatMessage]

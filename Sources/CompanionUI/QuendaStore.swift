@@ -2,6 +2,18 @@ import Foundation
 import SwiftUI
 import CompanionCore
 
+/// Identity for the phone's connection task. The device link can survive in the
+/// background while 24R records, even though Quenda releases its own connection.
+public struct QuendaConnectionContext: Hashable {
+    public let revision: Int
+    public let applicationRevision: Int
+    public let active: Bool
+    public init(revision: Int, applicationRevision: Int, active: Bool, foreground: Bool) {
+        self.revision = revision; self.applicationRevision = applicationRevision
+        self.active = active && foreground
+    }
+}
+
 @MainActor public final class QuendaStore: ObservableObject {
     @Published public var connected = false
     @Published public var connecting = false
@@ -17,6 +29,7 @@ import CompanionCore
     @Published public var interactions: [JSONValue] = []
     @Published public var activityTitles: [String] = []
     @Published public var hasEarlier = false
+    @Published public var uploadProgress: Double?
     private var before = 0
     private var backend: Backend?
     private var connectFactory: (() throws -> Backend)?
@@ -69,13 +82,38 @@ import CompanionCore
         guard attempt == connectionGeneration else { return }
         agents = newAgents; workspaces = newWorkspaces; sessions = newSessions
     }
-    public func create(agent: String, workspace: String?) async throws -> String {
+    public func create(agent: String, workspace: String?, provider: String? = nil, model: String? = nil) async throws -> String {
         guard let backend else { throw CompanionError.disconnected }
         var payload: [String: JSONValue] = ["agent_id": .string(agent)]
         if let workspace, !workspace.isEmpty { payload["workspace_id"] = .string(workspace) }
+        if let provider, let model { payload["provider"] = .string(provider); payload["model"] = .string(model) }
         let data = try await backend.request(method: "POST", path: "/api/sessions", body: .object(payload))
         let created = try JSONDecoder().decode(SessionInfo.self, from: data)
-        try await refresh(); return created.id
+        sessions.insert(created, at: 0); try? await refresh(); return created.id
+    }
+    public func createProject(name: String, path: String, description: String) async throws -> Workspace {
+        guard let backend else { throw CompanionError.disconnected }
+        var payload: [String: JSONValue] = ["name": .string(name), "description": .string(description)]
+        if !path.isEmpty { payload["path"] = .string(path) }
+        let created = try JSONDecoder().decode(Workspace.self, from: await backend.request(method: "POST", path: "/api/workspaces", body: .object(payload)))
+        workspaces.append(created); try? await refresh(); return created
+    }
+    public func models(agent: String) async throws -> [ModelChoice] {
+        guard let backend, RoutePolicy.validSessionID(agent) else { throw CompanionError.disconnected }
+        return try JSONDecoder().decode([ModelChoice].self, from: await backend.request(path: "/api/models?agent_id=\(agent)"))
+    }
+    public func providerSettings(agent: String) async throws -> JSONValue {
+        guard let backend, RoutePolicy.validSessionID(agent) else { throw CompanionError.disconnected }
+        return try JSONDecoder().decode(JSONValue.self, from: await backend.request(path: "/api/models/settings/\(agent)"))
+    }
+    public func saveProviderSettings(agent: String, revision: String, patch: JSONValue) async throws -> JSONValue {
+        guard let backend, RoutePolicy.validSessionID(agent) else { throw CompanionError.disconnected }
+        return try JSONDecoder().decode(JSONValue.self, from: await backend.request(method: "PUT", path: "/api/models/settings/\(agent)", body: .object(["revision": .string(revision), "patch": patch])))
+    }
+    public func imageData(session: String, attachment: MessageAttachment) async throws -> Data {
+        guard let backend, RoutePolicy.validSessionID(session), RoutePolicy.validSessionID(attachment.id), attachment.isImage,
+              attachment.size <= FrameCodec.maximumSize / 2 else { throw CompanionError.server("图片过大，无法在会话内预览。") }
+        return try await backend.request(path: "/api/sessions/\(session)/attachments/\(attachment.id)")
     }
     public func open(_ id: String) async {
         retry?.cancel(); retry = nil; recoveryID = nil
@@ -126,12 +164,16 @@ import CompanionCore
             before = page.before; hasEarlier = page.has_more
         } catch { self.error = error.localizedDescription }
     }
-    public func send(_ text: String) async throws {
+    public func send(_ text: String, attachments: [OutgoingAttachment] = []) async throws {
         guard let backend, let id = conversationID, streamConnected, !generating else { throw CompanionError.disconnected }
+        try AttachmentLimits.validate(attachments)
+        let attempt = generation
         error = nil; generating = true; streamedText = ""; activityTitles = []
+        uploadProgress = attachments.isEmpty ? nil : 0
+        defer { uploadProgress = nil }
         do {
-            try await backend.send(.object(["type": .string("user_message"), "content": .string(text)]), sessionID: id)
-            if let id = conversationID { try await reload(id, generation: generation) }
+            try await backend.sendUser(text, attachments: attachments, sessionID: id) { [weak self] in self?.uploadProgress = $0 }
+            if conversationID == id, generation == attempt { try await reload(id, generation: attempt) }
         } catch {
             self.error = "发送状态未确认：\(error.localizedDescription) 请恢复连接后检查会话记录。"
             scheduleRecovery(); throw error

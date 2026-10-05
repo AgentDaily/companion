@@ -81,26 +81,52 @@ import Network
     var isReady = false
     private var reader: Task<Void, Never>?
     private var applications: [String: any CompanionApplicationSession] = [:]
+    private var workers: [UUID: (String, Task<Void, Never>)] = [:]
+    private var tails: [String: Task<Void, Never>] = [:]
     init(channel: FramedConnection, registry: ApplicationRegistry) { self.channel = channel; self.registry = registry }
     func start() {
         reader = Task { [weak self] in
             guard let self else { return }
             do {
                 try await channel.start(); isReady = true; onReady?()
-                for try await packet in channel.packets { await handle(packet) }
+                for try await packet in channel.packets {
+                    guard workers.count < 64 else { throw CompanionError.server("请求积压，请重新连接。") }
+                    if packet.kind == "application_close", let app = packet.applicationID {
+                        cancelApplication(app)
+                        try await channel.send(RelayPacket(kind: "response", id: packet.id, status: 200, applicationID: app))
+                    } else { enqueue(packet) }
+                }
             } catch { }
             close()
         }
     }
     func close() {
         reader?.cancel(); reader = nil
+        workers.values.forEach { $0.1.cancel() }; workers.removeAll(); tails.removeAll()
         let sessions = applications.values; applications.removeAll(); sessions.forEach { $0.close() }
         channel.close(); isReady = false
         let callback = onClose; onClose = nil; callback?()
     }
     func applicationChanged(_ id: String) {
-        applications.removeValue(forKey: id)?.close()
+        cancelApplication(id)
         Task { try? await channel.send(RelayPacket(kind: "catalog_changed", applicationID: id)) }
+    }
+    private func cancelApplication(_ id: String) {
+        applications.removeValue(forKey: id)?.close()
+        let ids = workers.filter { $0.value.0 == id }.map(\.key)
+        for worker in ids { workers.removeValue(forKey: worker)?.1.cancel() }
+        tails.removeValue(forKey: id)
+    }
+    private func enqueue(_ packet: RelayPacket) {
+        let app = packet.kind == "catalog" && packet.applicationID == nil ? "catalog" : packet.applicationID ?? "quenda"
+        let previous = tails[app], id = UUID()
+        let task = Task { [weak self] in
+            await previous?.value
+            guard !Task.isCancelled, let self, self.isReady else { return }
+            await self.handle(packet)
+            self.workers.removeValue(forKey: id)
+        }
+        workers[id] = (app, task); tails[app] = task
     }
     private func handle(_ packet: RelayPacket) async {
         do {
@@ -121,6 +147,7 @@ import Network
                 response.id = packet.id; response.kind = "response"; response.applicationID = packet.applicationID
                 reply = response
             }
+            try Task.checkCancellation()
             try await channel.send(reply)
         } catch {
             try? await channel.send(RelayPacket(kind: "response", id: packet.id, status: 502, error: error.localizedDescription, applicationID: packet.applicationID))

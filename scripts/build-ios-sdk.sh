@@ -4,10 +4,20 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 sdk="$(xcrun --sdk iphoneos --show-sdk-path)"
 out=build/iOS-SDK
-mkdir -p "$out/QuendaCompanion.app"
-xcrun --sdk iphoneos swiftc -swift-version 5 -parse-as-library -target arm64-apple-ios17.0 -sdk "$sdk" -module-name CompanionCore -emit-module -emit-module-path "$out/CompanionCore.swiftmodule" -emit-library -static Sources/CompanionCore/*.swift -o "$out/libCompanionCore.a"
-xcrun --sdk iphoneos swiftc -swift-version 5 -parse-as-library -target arm64-apple-ios17.0 -sdk "$sdk" -I "$out" -module-name CompanionUI -emit-module -emit-module-path "$out/CompanionUI.swiftmodule" -emit-library -static Sources/CompanionUI/*.swift -o "$out/libCompanionUI.a"
-xcrun --sdk iphoneos swiftc -swift-version 5 -parse-as-library -target arm64-apple-ios17.0 -sdk "$sdk" -I "$out" -L "$out" -lCompanionUI -lCompanionCore Apps/iOS/App.swift -o "$out/QuendaCompanion.app/QuendaCompanion"
+mkdir -p "$out/QuendaCompanion.app" "$out/CVAD"
+cp Apps/iOS/ThirdPartyNotices.txt "$out/QuendaCompanion.app/"
+cp -R Sources/CompanionCore/Resources/silero_vad.mlmodelc "$out/QuendaCompanion.app/"
+vad_include="Vendor/Libfvad/include"
+vad_objects=()
+while IFS= read -r source; do
+    object="$out/CVAD/$(basename "${source%.c}").o"
+    xcrun --sdk iphoneos clang -O2 -target arm64-apple-ios17.0 -isysroot "$sdk" -I "$vad_include" -c "$source" -o "$object"
+    vad_objects+=("$object")
+done < <(find Vendor/Libfvad/src -name '*.c' -type f | sort)
+xcrun libtool -static -o "$out/libCVAD.a" "${vad_objects[@]}"
+xcrun --sdk iphoneos swiftc -I "$vad_include" -swift-version 5 -parse-as-library -target arm64-apple-ios17.0 -sdk "$sdk" -module-name CompanionCore -emit-module -emit-module-path "$out/CompanionCore.swiftmodule" -emit-library -static Sources/CompanionCore/*.swift -o "$out/libCompanionCore.a"
+xcrun --sdk iphoneos swiftc -I "$vad_include" -swift-version 5 -parse-as-library -target arm64-apple-ios17.0 -sdk "$sdk" -I "$out" -module-name CompanionUI -emit-module -emit-module-path "$out/CompanionUI.swiftmodule" -emit-library -static Sources/CompanionUI/*.swift -o "$out/libCompanionUI.a"
+xcrun --sdk iphoneos swiftc -I "$vad_include" -swift-version 5 -parse-as-library -target arm64-apple-ios17.0 -sdk "$sdk" -I "$out" -L "$out" -lCompanionUI -lCompanionCore -lCVAD Apps/iOS/App.swift -o "$out/QuendaCompanion.app/QuendaCompanion"
 xcrun actool Apps/iOS/Assets.xcassets --compile "$out/QuendaCompanion.app" --platform iphoneos --minimum-deployment-target 17.0 --target-device iphone --target-device ipad --app-icon AppIcon --output-partial-info-plist "$out/icon-info.plist"
 python3 - <<'PY'
 import plistlib

@@ -11,6 +11,7 @@
 		000000000000000000000015 /* CompanionCore in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000013 /* CompanionCore */; };
 		000000000000000000000016 /* CompanionUI in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000014 /* CompanionUI */; };
 		000000000000000000000018 = {isa = PBXBuildFile; fileRef = 000000000000000000000017; };
+		00000000000000000000001A /* ThirdPartyNotices.txt in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000019; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -18,6 +19,7 @@
 		000000000000000000000005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		000000000000000000000006 /* QuendaCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = QuendaCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		000000000000000000000019 /* ThirdPartyNotices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ThirdPartyNotices.txt; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,6 +41,7 @@
 				000000000000000000000004 /* App.swift */,
 				000000000000000000000005 /* Info.plist */,
                 000000000000000000000017,
+                000000000000000000000019 /* ThirdPartyNotices.txt */,
 				000000000000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -110,6 +113,7 @@
 			buildActionMask = 2147483647;
 			files = (
                 000000000000000000000018,
+                00000000000000000000001A /* ThirdPartyNotices.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

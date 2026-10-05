@@ -50,3 +50,16 @@ RPC 响应仅确认转发层完成这次发送 / 请求，**不等于 Agent 执�
 Pairing links optionally contain `nearby=<UUID>`. Legacy links without this field retain direct Tailscale host/port dialing. Nearby links resolve only the exact paired Bonjour name under `_companion._tcp` in `local.` and dial the returned service endpoint with peer-to-peer enabled. Discovery stops on match, error, cancellation or a ten-second timeout; reconnect performs fresh discovery. Discovery is not authentication: the existing TLS PSK remains required. No secret is advertised. The nearby listener binds available interfaces on a dynamic port, whereas the Tailscale listener remains loopback-bound behind Serve. A nearby connection may use infrastructure LAN when available; device evidence is required to establish an AWDL path.
 
 当 nearby 和远程 host 同时存在时，先完成附近发现和 TLS 握手；失败且未取消时才尝试远程地址。host=nearby 表示没有远程地址。只在建立设备连接时回退，不对已提交的应用消息作自动重发。Mac 同时开启动态端口附近监听与可选的 loopback Serve 监听；远程失败不关闭附近监听。TLS tickets 与 session resumption 关闭，确保每次连接使用当前配对密钥重新认证。
+
+
+`application_close`：指定 applicationID，立即取消该应用的队列并关闭会话，返回 200；不关闭设备连接。服务端按应用串行执行业务请求，同时独立读取断线与应用关闭消息，关闭应用可中断正在等待的识别。Whisper Anywhere 的 `voice` 消息正文为 action/session/sequence/audio，音频 PCM16 16 kHz 单声道小端；应用回复只含就绪、占用和状态文字。
+
+## Quenda 附件与管理接口
+
+Quenda 会话支持 `attachment_reset`、`attachment_begin` 和 `attachment_chunk`。每个操作必须携带当前已观察的 sessionID。begin 声明 UUID、文件名、媒体类型与字节数；chunk 使用 path 携带上传 UUID，body 为原始字节，每块最多 256 KiB。每条消息最多 6 个附件，合计最多 8 MiB。Mac 端按已认证设备、应用和会话暂存，断开、取消观察或切换会话时清除。
+
+上传完成后，user_message 携带 attachment_ids。Mac 检查声明大小和实际大小一致，再将附件转换为 Gateway 所需的 base64 attachments。上传和发送不自动重试；客户端在失败时保留草稿，用户需检查历史再决定重发。旧 Mac 版本不支持这些附件操作，需要同时更新两端。
+
+Quenda 专用路由新增 GET /api/models、GET/PUT /api/models/settings/{agent_id}、POST /api/workspaces，以及 GET /api/sessions/{session_id}/attachments/{attachment_id}。Provider 保存使用 Gateway revision 防止覆盖并发修改；API Key 只在保存请求中传向 Mac，返回值不包含密钥，Companion 不持久化密钥。其他 Agent 修改、项目删除和任意文件路径访问仍不开放。
+
+消息中的图片可从 Gateway 读取预览，单张历史预览受现有响应 2 MiB 限制；超过限制仍显示附件名称和大小。照片选择器将图片最长边缩至 1600 像素，转换为 JPEG；文件选择器保持原始文件内容。此处是 Quenda 的消息附件，不是通用应用安装或文件管理接口。

@@ -9,10 +9,25 @@ import CompanionUI
     let connection: MacConnectionStore
     let quenda = QuendaStore()
     let configuration = QuendaConfiguration()
+    let dayRecord: DayRecordService
+    let dayRecordStore: DayRecordStore
+    @Published var whisperShared = UserDefaults.standard.object(forKey: "app.whisper-anywhere.shared") as? Bool ?? true
     init() {
         registry = ApplicationRegistry()
         connection = MacConnectionStore(registry: registry)
+        let config = configuration
+        let service = DayRecordService(gateway: { try LocalGateway.validate(config.gateway) })
+        dayRecord = service; dayRecordStore = DayRecordStore(service: service)
+        registry.register(.dayRecord) { _ in DayRecordApplicationSession(service: service) }
+        service.start()
         registerQuenda()
+        registerWhisper()
+    }
+    func registerWhisper() {
+        UserDefaults.standard.set(whisperShared, forKey: "app.whisper-anywhere.shared")
+        let app = CompanionApplication.whisper
+        registry.register(CompanionApplication(id: app.id, name: app.name, summary: app.summary, symbol: app.symbol, enabled: whisperShared)) { _ in WhisperProxySession() }
+        connection.applicationChanged(app.id)
     }
     private func registerQuenda() {
         let application = configuration.application
@@ -46,7 +61,7 @@ import CompanionUI
         WindowGroup("Companion", id: "main") {
             CompanionHome(model: model, connection: model.connection, configuration: model.configuration)
                 .frame(minWidth: 880, minHeight: 600)
-                .onAppear { delegate.onTermination = { model.connection.stop() } }
+                .onAppear { delegate.onTermination = { model.dayRecord.stop(); model.connection.stop() } }
         }
         Settings { DeviceSettings(connection: model.connection).padding(24).frame(width: 480) }
         MenuBarExtra("Companion", systemImage: "app.connected.to.app.below.fill") { CompanionMenu(connection: model.connection) }
@@ -65,7 +80,7 @@ private struct CompanionMenu: View {
 }
 
 private struct CompanionHome: View {
-    let model: MacModel
+    @ObservedObject var model: MacModel
     @ObservedObject var connection: MacConnectionStore
     @ObservedObject var configuration: QuendaConfiguration
     @State private var settings = false
@@ -84,12 +99,22 @@ private struct CompanionHome: View {
                         ApplicationTile(application: .quenda, status: configuration.shared ? "已向配对的 iPhone 开放" : "仅在这台 Mac 使用")
                             .padding(.horizontal, 18).background(.background, in: RoundedRectangle(cornerRadius: 18))
                     }.buttonStyle(.plain)
-                    Text("每个应用有独立设置。录音转录等新应用将在接入后显示于此。").font(.caption).foregroundStyle(.secondary)
+                    NavigationLink(value: "whisper-anywhere") {
+                        ApplicationTile(application: .whisper, status: model.whisperShared ? "手机麦克风 · Mac 本地输入" : "尚未开放手机输入")
+                            .padding(.horizontal, 18).background(.background, in: RoundedRectangle(cornerRadius: 18))
+                    }.buttonStyle(.plain)
+                    NavigationLink(value: "24r") {
+                        ApplicationTile(application: .dayRecord, status: "手机记录 · 每小时整理 · 一日总结")
+                            .padding(.horizontal, 18).background(.background, in: RoundedRectangle(cornerRadius: 18))
+                    }.buttonStyle(.plain)
+                    Text("每个应用有独立设置，共用设备连接。").font(.caption).foregroundStyle(.secondary)
                 }.padding(32).frame(maxWidth: 820)
             }.navigationTitle("Companion")
             .toolbar { Button { settings = true } label: { Label("设备连接", systemImage: "network") } }
             .navigationDestination(for: String.self) { id in
+                if id == "24r" { DayRecordView(store: model.dayRecordStore) }
                 if id == "quenda" { QuendaMacView(model: model, store: model.quenda, configuration: model.configuration) }
+                if id == "whisper-anywhere" { WhisperMacView(model: model) }
             }
         }
         .sheet(isPresented: $settings) {
@@ -141,8 +166,8 @@ private struct QuendaMacView: View {
             }
         }
         .task { if !store.connected { await model.connectQuenda() } }
-        .sheet(isPresented: $creating) { NewSessionView(store: store, defaultAgent: configuration.defaultAgent) { selection = $0 }.frame(width: 450, height: 320) }
-        .sheet(isPresented: $settings) { QuendaSettingsView(configuration: configuration) { await model.applyQuendaConfiguration() } }
+        .sheet(isPresented: $creating) { NewSessionView(store: store, defaultAgent: configuration.defaultAgent) { selection = $0 }.frame(width: 500, height: 580) }
+        .sheet(isPresented: $settings) { QuendaSettingsView(configuration: configuration, store: store) { await model.applyQuendaConfiguration() } }
     }
 }
 
@@ -186,5 +211,42 @@ private struct DeviceSettings: View {
         let filter = CIFilter.qrCodeGenerator(); filter.message = Data(text.utf8)
         guard let output = filter.outputImage, let image = CIContext().createCGImage(output.transformed(by: CGAffineTransform(scaleX: 6, y: 6)), from: output.extent.applying(CGAffineTransform(scaleX: 6, y: 6))) else { return nil }
         return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+}
+
+
+private struct WhisperMacView: View {
+    @ObservedObject var model: MacModel
+    @State private var status = "请打开独立的 Whisper Anywhere 应用。"
+    var body: some View {
+        Form {
+            Section("手机麦克风输入") {
+                Toggle("允许配对 iPhone 使用 Whisper Anywhere", isOn: $model.whisperShared)
+                    .onChange(of: model.whisperShared) { _, _ in model.registerWhisper() }
+                Text(status)
+                Button("打开 Whisper Anywhere") {
+                    guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "local.whisper-anywhere") else {
+                        status = "未找到 Whisper Anywhere，请先安装并手动打开该应用。"
+                        return
+                    }
+                    NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+                }
+                Button("检查本地服务") { Task { await check() } }
+            }
+            Section("使用方式") {
+                Text("1. 在 Mac 打开要输入文字的应用，点击输入位置。")
+                Text("2. 在 iPhone Companion 打开 Whisper Anywhere，开始录音。")
+                Text("3. 结束并输入。文字由 Mac 本地识别后输入，手机不显示转写。")
+                Text("模型、识别语言和辅助功能权限在 Whisper Anywhere 中配置。录音时不要切换电脑前台应用。取消、断线和进入后台会停止本轮。")
+            }
+        }.padding(28).navigationTitle("Whisper Anywhere").task { await check() }
+    }
+    private func check() async {
+        let proxy = WhisperProxySession(); defer { proxy.close() }
+        do {
+            let reply = try await proxy.handle(VoiceCommand("status").packet())
+            guard reply.error == nil, let body = reply.body else { throw CompanionError.server(reply.error ?? "本地服务未响应。") }
+            status = try JSONDecoder().decode(VoiceStatus.self, from: body).message
+        } catch { status = error.localizedDescription }
     }
 }

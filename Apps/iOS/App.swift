@@ -3,18 +3,32 @@ import CompanionCore
 import CompanionUI
 
 @main struct QuendaCompanionApp: App {
+    init() { ConnectionDiagnostics.shared = .persisted() }
     @StateObject private var connection = DeviceConnectionStore()
     @StateObject private var quenda = QuendaStore()
     @StateObject private var configuration = QuendaConfiguration()
+    @StateObject private var dayRecord = DayRecordPhoneStore()
     @Environment(\.scenePhase) private var scenePhase
     @State private var settings = false
     var body: some Scene {
         WindowGroup {
-            PhoneHome(connection: connection, quenda: quenda, configuration: configuration, settings: $settings)
+            PhoneHome(connection: connection, quenda: quenda, configuration: configuration, dayRecord: dayRecord, settings: $settings)
                 .task {
                     connection.loadPairing()
                     if connection.pairing == nil { settings = true }
                     else { await connection.resume() }
+                }
+                .task(id: connection.revision) {
+                    dayRecord.attach(link: connection.link)
+                    guard connection.link != nil else { return }
+                    await dayRecord.store.refresh(allDays: true)
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .seconds(60)) } catch { break }
+                        await dayRecord.store.refresh(allDays: true)
+                    }
+                }
+                .onChange(of: dayRecord.running) { _, running in
+                    if !running && scenePhase == .background { connection.suspend() }
                 }
                 .onOpenURL { url in
                     Task {
@@ -24,23 +38,28 @@ import CompanionUI
                 }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { Task { await connection.resume() } }
-                    if phase == .background { quenda.disconnect(); connection.suspend() }
+                    if phase == .background { quenda.disconnect(); if !dayRecord.running { connection.suspend() } }
                 }
         }
     }
 }
 
 private enum PhoneRoute: Hashable { case application(String), conversation(String) }
-private struct QuendaConnectionContext: Hashable { let revision: Int; let applicationRevision: Int; let active: Bool }
 
 private struct PhoneHome: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var connection: DeviceConnectionStore
     @ObservedObject var quenda: QuendaStore
     @ObservedObject var configuration: QuendaConfiguration
+    @ObservedObject var dayRecord: DayRecordPhoneStore
     @Binding var settings: Bool
     @State private var navigation: [PhoneRoute] = []
+    private var quendaContext: QuendaConnectionContext {
+        QuendaConnectionContext(revision: connection.revision, applicationRevision: connection.applicationRevisions["quenda", default: 0], active: navigation.contains(.application("quenda")), foreground: scenePhase != .background)
+    }
     private var applications: [CompanionApplication] {
-        connection.applications.isEmpty ? [.quenda] : connection.applications
+        let available = connection.applications.isEmpty ? [CompanionApplication.quenda] : connection.applications
+        return available.contains(where: { $0.id == "24r" }) ? available : available + [.dayRecord]
     }
     var body: some View {
         NavigationStack(path: $navigation) {
@@ -54,7 +73,7 @@ private struct PhoneHome: View {
                 }
                 Section("应用") {
                     ForEach(applications) { application in
-                        if application.id == "quenda" {
+                        if ["quenda", "whisper-anywhere", "24r"].contains(application.id) {
                             NavigationLink(value: PhoneRoute.application(application.id)) {
                                 ApplicationTile(application: application, status: !connection.connected ? "连接 Mac 后使用" : application.enabled ? "可以打开" : "Mac 尚未启用此应用")
                             }
@@ -69,9 +88,15 @@ private struct PhoneHome: View {
             .refreshable { await connection.reconnect() }
             .navigationDestination(for: PhoneRoute.self) { route in
                 switch route {
+                case .application("24r"):
+                    DayRecordView(store: dayRecord.store, capture: dayRecord)
                 case .application("quenda"):
                     QuendaPhoneView(store: quenda, connection: connection, configuration: configuration) { navigation.append(.conversation($0)) }
-                case .conversation(let id): ConversationView(store: quenda, sessionID: id)
+                case .application("whisper-anywhere"):
+                    if dayRecord.running {
+                        VStack(spacing: 20) { Text("24R 正在使用麦克风"); Button("暂停 24R，使用语音输入") { dayRecord.pause() } }
+                    } else { VoiceInputView(connection: connection) }
+                case .conversation(let id): ConversationView(store: quenda, sessionID: id, voiceLink: dayRecord.running ? nil : connection.link)
                 default: Text("请更新 Companion 以使用这个应用。")
                 }
             }
@@ -80,8 +105,13 @@ private struct PhoneHome: View {
             }
             .sheet(isPresented: $settings) { DevicePairingView(connection: connection) }
         }
-        .task(id: QuendaConnectionContext(revision: connection.revision, applicationRevision: connection.applicationRevisions["quenda", default: 0], active: navigation.contains(.application("quenda")))) {
-            guard navigation.contains(.application("quenda")), let link = connection.link else { quenda.disconnect(); return }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if navigation.last != .application("24r") {
+                DayRecordRecordingBar(capture: dayRecord)
+            }
+        }
+        .task(id: quendaContext) {
+            guard quendaContext.active, let link = connection.link else { quenda.disconnect(); return }
             guard connection.applications.contains(where: { $0.id == "quenda" && $0.enabled }) else {
                 quenda.disconnect(); quenda.error = "请在 Mac 的 Quenda 设置中启用此应用。"; return
             }
@@ -127,7 +157,7 @@ private struct QuendaPhoneView: View {
         }
         .refreshable { do { try await store.refresh() } catch { store.error = error.localizedDescription } }
         .sheet(isPresented: $creating) { NewSessionView(store: store, defaultAgent: configuration.defaultAgent, onCreated: onCreated) }
-        .sheet(isPresented: $settings) { QuendaSettingsView(configuration: configuration) }
+        .sheet(isPresented: $settings) { QuendaSettingsView(configuration: configuration, store: store) }
     }
     @MainActor private func connect() async {
         guard let link = connection.link else { store.disconnect(); return }
@@ -168,9 +198,13 @@ private struct DevicePairingView: View {
                     }
                 }
                 if let error = connection.error { Section { Text(error).foregroundStyle(.red) } }
+                Section("连接诊断") {
+                    ShareLink("分享最近的连接记录", item: ConnectionDiagnostics.shared.summary)
+                    Text("只包含发现、连接阶段和网络错误，不包含配对密钥、录音或对话内容。").font(.caption).foregroundStyle(.secondary)
+                }
                 Section {
                     Text("附近连接无需热点，开启 Wi-Fi 并允许本地网络访问即可。远程连接需要两台设备连接 Tailscale。配对信息保存在 iPhone 钥匙串。")
-                    Text("切到后台后设备连接会暂停，回到 App 时恢复。应用负责保存和恢复自己的任务。")
+                    Text("24R 记录期间保持音频会话与设备连接；其他情况下切到后台暂停连接，回到 App 恢复。")
                 }
             }.navigationTitle("设备连接与配对").toolbar { Button("完成") { dismiss() } }
         }

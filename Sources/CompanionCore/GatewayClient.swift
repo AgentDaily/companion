@@ -73,7 +73,8 @@ import Foundation
         return pair.stream
     }
     public func send(_ value: JSONValue) async throws {
-        let data = try JSONEncoder().encode(value)
+        let encoder = JSONEncoder(); encoder.outputFormatting = .withoutEscapingSlashes
+        let data = try encoder.encode(value)
         try await task.send(.string(String(decoding: data, as: UTF8.self)))
     }
     public func close(_ error: Error = CompanionError.disconnected) {
@@ -90,10 +91,13 @@ public enum RoutePolicy {
     public static func allows(method: String, path: String) -> Bool {
         guard path.hasPrefix("/api/"), !path.contains("%"), !path.contains(".."), !path.contains("\\"), let c = URLComponents(string: path), c.host == nil, c.fragment == nil else { return false }
         if method == "GET", ["/api/health", "/api/agents", "/api/workspaces", "/api/sessions"].contains(c.path) { return true }
-        if method == "POST", c.path == "/api/sessions", c.query == nil { return true }
+        if method == "POST", ["/api/sessions", "/api/workspaces"].contains(c.path), c.query == nil { return true }
+        if method == "GET", c.path == "/api/models" { return true }
+        let modelParts = c.path.split(separator: "/").map(String.init)
+        if modelParts.count == 4, modelParts.prefix(3) == ["api", "models", "settings"], validSessionID(modelParts[3]), c.query == nil, ["GET", "PUT"].contains(method) { return true }
         let parts = c.path.split(separator: "/").map(String.init)
         guard parts.count >= 3, parts[0] == "api", parts[1] == "sessions", validSessionID(parts[2]), method == "GET" else { return false }
-        return parts.count == 3 || (parts.count == 4 && ["message-pages", "interactions"].contains(parts[3]))
+        return parts.count == 3 || (parts.count == 4 && ["message-pages", "interactions"].contains(parts[3])) || (parts.count == 5 && parts[3] == "attachments" && validSessionID(parts[4]))
     }
 }
 

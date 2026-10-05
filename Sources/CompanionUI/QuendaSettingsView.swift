@@ -2,15 +2,17 @@ import SwiftUI
 
 public struct QuendaSettingsView: View {
     @ObservedObject private var configuration: QuendaConfiguration
+    private let store: QuendaStore?
     private let onSave: () async -> Void
     @State private var gateway: String
     @State private var shared: Bool
     @State private var agent: String
     @State private var saving = false
+    @State private var projectSheet = false
     @State private var error: String?
     @Environment(\.dismiss) private var dismiss
-    public init(configuration: QuendaConfiguration, onSave: @escaping () async -> Void = {}) {
-        self.configuration = configuration; self.onSave = onSave
+    public init(configuration: QuendaConfiguration, store: QuendaStore? = nil, onSave: @escaping () async -> Void = {}) {
+        self.configuration = configuration; self.store = store; self.onSave = onSave
         _gateway = State(initialValue: configuration.gateway)
         _shared = State(initialValue: configuration.shared)
         _agent = State(initialValue: configuration.defaultAgent)
@@ -27,6 +29,12 @@ public struct QuendaSettingsView: View {
                 #else
                 Section { Text("Gateway 地址与应用共享开关在 Mac 的 Quenda 设置中配置。").foregroundStyle(.secondary) }
                 #endif
+                if let store {
+                    Section("Quenda 管理") {
+                        NavigationLink { ProviderSettingsView(store: store, defaultAgent: store.agents.first { $0.id == agent }?.id ?? store.agents.first?.id ?? agent) } label: { Label("Provider 与模型", systemImage: "server.rack") }
+                        Button { projectSheet = true } label: { Label("新建项目", systemImage: "folder.badge.plus") }
+                    }.disabled(!store.connected)
+                }
                 Section("这台设备的偏好") {
                     TextField("新会话默认 Agent ID", text: $agent)
                     Text("默认 Agent 不可用时，使用列表中的第一个 Agent。").font(.caption).foregroundStyle(.secondary)
@@ -47,11 +55,13 @@ public struct QuendaSettingsView: View {
                     }
                 }.disabled(saving)
             }
+            .formStyle(.grouped)
             .navigationTitle("Quenda 设置")
+            .sheet(isPresented: $projectSheet) { if let store { NewProjectView(store: store) } }
             .toolbar { Button("取消") { dismiss() } }
         }
         #if os(macOS)
-        .frame(width: 480, height: 330)
+        .frame(width: 540, height: 600)
         #endif
     }
 }

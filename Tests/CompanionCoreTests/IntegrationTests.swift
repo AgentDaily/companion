@@ -115,6 +115,88 @@ final class IntegrationTests: XCTestCase {
         try await next.send(.object(["type":.string("interrupt")]))
         let terminal = try await iterator.next(); XCTAssertEqual(terminal?.type,"stream_interrupted")
     }
+    @MainActor func testAttachmentChunksReachGatewayOnceAndHistoryKeepsMetadata() async throws {
+        let (server, backend, url, id, _) = try await setup()
+        defer { backend.close(); server.stop() }
+        _ = try await backend.watch(id)
+        let bytes = Data(repeating: 123, count: 3 * 1024 * 1024)
+        let attachment = OutgoingAttachment(name: "手机资料.pdf", mediaType: "application/pdf", data: bytes)
+        var progress: [Double] = []
+        try await backend.sendUser("", attachments: [attachment], sessionID: id) { progress.append($0) }
+        XCTAssertEqual(progress.last, 1)
+        XCTAssertGreaterThan(progress.count, 1)
+        let (data, _) = try await URLSession.shared.data(from: url.appendingPathComponent("test/stats/\(id)"))
+        let commands = try JSONDecoder().decode(JSONValue.self, from: data)["commands"].array
+        XCTAssertEqual(commands.filter { $0["type"].text == "user_message" }.count, 1)
+        XCTAssertEqual(commands.first?["attachments"].array.first?["data"].text, bytes.base64EncodedString())
+        let page = try JSONDecoder().decode(MessagePage.self, from: await backend.request(path: "/api/sessions/\(id)/message-pages"))
+        XCTAssertEqual(page.items.first?.attachments?.first?.name, "手机资料.pdf")
+        XCTAssertEqual(page.items.first?.attachments?.first?.size, bytes.count)
+        let newSession = try JSONDecoder().decode(SessionInfo.self, from: await backend.request(method: "POST", path: "/api/sessions", body: .object(["agent_id": .string("quenda-code")])))
+        _ = try await backend.watch(newSession.id)
+        do { try await backend.sendUser("stale", attachments: [attachment], sessionID: id) { _ in }; XCTFail("stale upload reached a different conversation") } catch { }
+    }
+    @MainActor func testPhotoHistoryLoadsFromPairedGateway() async throws {
+        let (server, backend, _, id, _) = try await setup()
+        defer { backend.close(); server.stop() }
+        _ = try await backend.watch(id)
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aUYsAAAAASUVORK5CYII=")!
+        try await backend.sendUser("看图片", attachments: [OutgoingAttachment(name: "照片.jpg", mediaType: "image/png", data: png)], sessionID: id) { _ in }
+        let page = try JSONDecoder().decode(MessagePage.self, from: await backend.request(path: "/api/sessions/\(id)/message-pages"))
+        let attachment = try XCTUnwrap(page.items.first?.attachments?.first)
+        XCTAssertTrue(attachment.isImage)
+        let received = try await backend.request(path: "/api/sessions/\(id)/attachments/\(attachment.id)")
+        XCTAssertEqual(received, png)
+    }
+    @MainActor func testManagementThroughPairedRelayPreservesRevisionAndMasksCredentials() async throws {
+        let (server, backend, _, _, _) = try await setup()
+        defer { backend.close(); server.stop() }
+        let project = try JSONDecoder().decode(Workspace.self, from: await backend.request(method: "POST", path: "/api/workspaces", body: .object(["name": .string("手机新项目")])) )
+        let workspaces = try JSONDecoder().decode([Workspace].self, from: await backend.request(path: "/api/workspaces"))
+        XCTAssertTrue(workspaces.contains { $0.id == project.id })
+        let settings = try JSONDecoder().decode(JSONValue.self, from: await backend.request(path: "/api/models/settings/quenda-code"))
+        let body: JSONValue = .object(["revision": settings["revision"], "patch": .object(["providers": .object(["fixture": .object(["api_key": .string("fixture-secret-never-echo")])]), "models": .object(["default": .object(["provider": .string("fixture"), "model": .string("fixture-model")])])])])
+        let saved = try await backend.request(method: "PUT", path: "/api/models/settings/quenda-code", body: body)
+        XCTAssertFalse(String(decoding: saved, as: UTF8.self).contains("fixture-secret-never-echo"))
+        XCTAssertTrue(try JSONDecoder().decode(JSONValue.self, from: saved)["providers"].array.first?["configured"].flag == true)
+        do { _ = try await backend.request(method: "PUT", path: "/api/models/settings/quenda-code", body: body); XCTFail("stale revision overwrote provider settings") } catch { }
+        let models = try JSONDecoder().decode([ModelChoice].self, from: await backend.request(path: "/api/models?agent_id=quenda-code"))
+        XCTAssertEqual(models.first?.model_id, "fixture-model")
+    }
+    @MainActor func testQuendaForegroundRestoresConnectionWhileRecordingKeepsDeviceLink() async throws {
+        let url = try fixture(), key = try Pairing.newKey()
+        let relay = try RelayServer(gateway: url, host: "127.0.0.1", port: 0, key: key)
+        try await relay.start(); defer { relay.stop() }
+        let link = CompanionLink(pairing: try Pairing(host: "127.0.0.1", port: relay.port, key: key))
+        try await link.connect(); defer { link.close() }
+        let store = QuendaStore(); defer { store.disconnect() }
+        await store.connect { QuendaBackend(link: link) }
+        XCTAssertTrue(store.connected)
+        let foreground = QuendaConnectionContext(revision: 1, applicationRevision: 0, active: true, foreground: true)
+        let background = QuendaConnectionContext(revision: 1, applicationRevision: 0, active: true, foreground: false)
+        // The app releases Quenda in the background, but 24R keeps the device
+        // link and its revision unchanged. SwiftUI only reruns a changed task ID.
+        store.disconnect()
+        var previous = foreground
+        for context in [background, foreground] where context != previous {
+            previous = context
+            if context.active { await store.connect { QuendaBackend(link: link) } }
+            else { store.disconnect() }
+        }
+        XCTAssertTrue(store.connected, "Returning to Quenda did not reconnect on the retained 24R device link")
+        let applications = try await link.applications()
+        XCTAssertFalse(applications.isEmpty)
+    }
+    @MainActor func testOptionalLiveGatewayStoreConnectReadOnly() async throws {
+        guard let address = ProcessInfo.processInfo.environment["QUENDA_LIVE_GATEWAY"], let url = URL(string: address) else { throw XCTSkip("Optional read-only live store connection") }
+        let key = try Pairing.newKey(), relay = try RelayServer(gateway: url, host: "127.0.0.1", port: 0, key: key)
+        try await relay.start(); defer { relay.stop() }
+        let link = CompanionLink(pairing: try Pairing(host: "127.0.0.1", port: relay.port, key: key))
+        try await link.connect(); defer { link.close() }
+        let store = QuendaStore(); defer { store.disconnect() }
+        await store.connect { QuendaBackend(link: link) }
+        XCTAssertTrue(store.connected, store.error ?? "Quenda connection failed")
+    }
     @MainActor func testExistingGatewayReadOnlyViaTailscaleInterface() async throws {
         guard let address = ProcessInfo.processInfo.environment["QUENDA_LIVE_GATEWAY"], let url = URL(string:address), let host = LocalGateway.tailscaleAddresses().first else { throw XCTSkip("Optional read-only live Gateway / Tailscale probe.") }
         let key = try Pairing.newKey()

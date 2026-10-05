@@ -41,6 +41,7 @@ import CompanionCore
     public func reconnect() async {
         retry?.cancel(); retry = nil
         guard !suspended, let pairing else { return }
+        ConnectionDiagnostics.shared.record("device.reconnect", "nearby=\(pairing.nearbyService != nil) remote=\(pairing.remoteHost != nil)")
         attempt += 1; let token = attempt
         operation?.cancel(); candidate?.onState = nil; candidate?.close(); link = nil; revision += 1
         state = pairing.nearbyService == nil ? .connectingRemote : .discovering; error = nil
@@ -82,6 +83,7 @@ import CompanionCore
         await task.value
     }
     public func suspend() {
+        ConnectionDiagnostics.shared.record("device.suspend")
         suspended = true; attempt += 1
         operation?.cancel(); operation = nil; retry?.cancel(); retry = nil
         candidate?.onState = nil; candidate?.close(); candidate = nil

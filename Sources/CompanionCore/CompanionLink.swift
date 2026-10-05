@@ -3,11 +3,12 @@ import Network
 
 public enum CompanionTransport: String, Sendable { case nearby, remote }
 public enum CompanionConnectionState: Equatable, Sendable {
-    case disconnected, discovering, connectingRemote, connected(CompanionTransport)
+    case disconnected, discovering, connectingNearby, connectingRemote, connected(CompanionTransport)
     public var title: String {
         switch self {
         case .disconnected: return "Mac 未连接"
         case .discovering: return "正在寻找附近的 Mac…"
+        case .connectingNearby: return "已发现 Mac，正在建立附近连接…"
         case .connectingRemote: return "正在通过 Tailscale 连接…"
         case .connected(.nearby): return "附近连接已建立"
         case .connected(.remote): return "Tailscale 已连接"
@@ -59,6 +60,7 @@ public enum CompanionConnectionState: Equatable, Sendable {
                     let endpoint = try await search.value; discoveryTask = nil
                     try Task.checkCancellation(); guard !closed else { throw CompanionError.disconnected }
                     let nearby = try FramedConnection(endpoint: endpoint, key: pairing.key); channel = nearby
+                    update(.connectingNearby)
                     try await nearby.start()
                     update(.connected(.nearby))
                 } catch {
@@ -112,7 +114,7 @@ public enum CompanionConnectionState: Equatable, Sendable {
         pair.continuation.onTermination = { [weak self] _ in Task { @MainActor in self?.subscribers.removeValue(forKey: id) } }
         return pair.stream
     }
-    public func request(_ packet: RelayPacket) async throws -> RelayPacket {
+    public func request(_ packet: RelayPacket, timeout: Duration = .seconds(15)) async throws -> RelayPacket {
         try Task.checkCancellation()
         guard !closed, reader != nil else { throw CompanionError.disconnected }
         return try await withTaskCancellationHandler(operation: {
@@ -123,7 +125,7 @@ public enum CompanionConnectionState: Equatable, Sendable {
                     catch { pending.removeValue(forKey: packet.id)?.wait.resume(throwing: error) }
                 }
                 Task {
-                    do { try await Task.sleep(for: .seconds(15)) } catch { return }
+                    do { try await Task.sleep(for: timeout) } catch { return }
                     pending.removeValue(forKey: packet.id)?.wait.resume(throwing: CompanionError.timeout)
                 }
             }
@@ -137,5 +139,9 @@ public enum CompanionConnectionState: Equatable, Sendable {
         let streams = subscribers.values; subscribers.removeAll(); streams.forEach { $0.1.finish(throwing: error) }
         update(.disconnected)
     }
-    private func update(_ state: CompanionConnectionState) { self.state = state; onState?(state) }
+    private func update(_ state: CompanionConnectionState) {
+        self.state = state
+        ConnectionDiagnostics.shared.record("device.state", state.title)
+        onState?(state)
+    }
 }

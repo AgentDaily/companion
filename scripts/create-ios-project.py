@@ -5,26 +5,28 @@ root = Path(__file__).resolve().parents[1]
 (root/'Apps/iOS/Info.plist').write_bytes(plistlib.dumps({
     'CFBundleDisplayName': 'Companion', 'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)',
     'CFBundleExecutable': '$(EXECUTABLE_NAME)', 'CFBundleName': '$(PRODUCT_NAME)',
-    'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.2.0', 'CFBundleVersion': '3',
+    'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.5.2', 'CFBundleVersion': '18',
     'CFBundleURLTypes': [{'CFBundleURLName': 'com.quenda.companion.pair', 'CFBundleURLSchemes': ['quenda-companion']}],
     'NSBonjourServices': ['_companion._tcp'],
-    'NSLocalNetworkUsageDescription': '连接你的 Mac Companion，访问 Quenda 会话。',
+    'NSLocalNetworkUsageDescription': '连接你的 Mac Companion，使用配对设备间的应用。'
+    , 'NSMicrophoneUsageDescription': '采集手机麦克风声音，发送到你配对的 Mac 本地识别并输入文字。',
+    'UIBackgroundModes': ['audio'],
     'UILaunchScreen': {}, 'UISupportedInterfaceOrientations': ['UIInterfaceOrientationPortrait', 'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'],
 }))
 (root/'Apps/macOS/Info.plist').write_bytes(plistlib.dumps({
     'CFBundleDisplayName': 'Companion', 'CFBundleIdentifier': 'com.quenda.companion.mac',
     'CFBundleExecutable': 'QuendaCompanionMac', 'CFBundleName': 'Companion', 'CFBundleIconFile': 'Companion', 'CFBundlePackageType': 'APPL',
-    'CFBundleShortVersionString': '0.2.0', 'CFBundleVersion': '3', 'LSMinimumSystemVersion': '14.0',
+    'CFBundleShortVersionString': '0.5.2', 'CFBundleVersion': '18', 'LSMinimumSystemVersion': '14.0',
     'NSHighResolutionCapable': True, 'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'NSBonjourServices': ['_companion._tcp'],
     'NSLocalNetworkUsageDescription': '连接本机 Quenda Gateway，并接受你配对的手机连接。',
 }))
 # Stable object IDs keep the generated project reviewable.
-names = ['project','mainGroup','productsGroup','appFile','plistFile','product','sourceBuild','sourcesPhase','frameworksPhase','resourcesPhase','target','projectConfigs','targetConfigs','pDebug','pRelease','tDebug','tRelease','package','core','ui','coreBuild','uiBuild','assetsFile','assetsBuild']
+names = ['project','mainGroup','productsGroup','appFile','plistFile','product','sourceBuild','sourcesPhase','frameworksPhase','resourcesPhase','target','projectConfigs','targetConfigs','pDebug','pRelease','tDebug','tRelease','package','core','ui','coreBuild','uiBuild','assetsFile','assetsBuild','noticesFile','noticesBuild']
 i = {name: f'{idx:024X}' for idx, name in enumerate(names, 1)}
 objects = {
 'project': f'isa = PBXProject; attributes = {{ LastUpgradeCheck = 2600; }}; buildConfigurationList = {i["projectConfigs"]}; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = {i["mainGroup"]}; productRefGroup = {i["productsGroup"]}; projectDirPath = ""; projectRoot = ""; targets = ({i["target"]}); packageReferences = ({i["package"]});',
-'mainGroup': f'isa = PBXGroup; children = ({i["appFile"]}, {i["plistFile"]}, {i["assetsFile"]}, {i["productsGroup"]}); sourceTree = "<group>";',
+'mainGroup': f'isa = PBXGroup; children = ({i["appFile"]}, {i["plistFile"]}, {i["assetsFile"]}, {i["noticesFile"]}, {i["productsGroup"]}); sourceTree = "<group>";',
 'productsGroup': f'isa = PBXGroup; name = Products; children = ({i["product"]}); sourceTree = "<group>";',
 'appFile': 'isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>";',
 'plistFile': 'isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>";',
@@ -32,9 +34,11 @@ objects = {
 'sourceBuild': f'isa = PBXBuildFile; fileRef = {i["appFile"]};',
 'sourcesPhase': f'isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ({i["sourceBuild"]}); runOnlyForDeploymentPostprocessing = 0;',
 'frameworksPhase': f'isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ({i["coreBuild"]}, {i["uiBuild"]}); runOnlyForDeploymentPostprocessing = 0;',
+ 'noticesFile': 'isa = PBXFileReference; lastKnownFileType = text; path = ThirdPartyNotices.txt; sourceTree = "<group>";',
+'noticesBuild': f'isa = PBXBuildFile; fileRef = {i["noticesFile"]};',
 'assetsFile': 'isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>";',
 'assetsBuild': f'isa = PBXBuildFile; fileRef = {i["assetsFile"]};',
-'resourcesPhase': f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({i["assetsBuild"]}); runOnlyForDeploymentPostprocessing = 0;',
+'resourcesPhase': f'isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ({i["assetsBuild"]}, {i["noticesBuild"]}); runOnlyForDeploymentPostprocessing = 0;',
 'package': 'isa = XCLocalSwiftPackageReference; relativePath = ../..;',
 'core': f'isa = XCSwiftPackageProductDependency; package = {i["package"]}; productName = CompanionCore;',
 'ui': f'isa = XCSwiftPackageProductDependency; package = {i["package"]}; productName = CompanionUI;',

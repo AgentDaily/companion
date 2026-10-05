@@ -1,12 +1,17 @@
 """Isolated Gateway contract fixture. Never contacts a model or the real Gateway."""
 import argparse
 import asyncio
+import base64
 from uuid import uuid4
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 import uvicorn
 
 app = FastAPI()
 sessions = {}
+projects = [{"id": "test-workspace", "name": "测试工作区"}]
+provider_documents = {}
+attachment_bytes = {}
 
 def info(s):
     return {k: s[k] for k in ('id','agent_id','title','agent_name','updated_at','status')}
@@ -16,7 +21,32 @@ def health(): return {'status': 'ok'}
 @app.get('/api/agents')
 def agents(): return [{'id': 'quenda-code', 'name': '测试 Agent'}]
 @app.get('/api/workspaces')
-def workspaces(): return [{'id':'test-workspace', 'name':'测试工作区'}]
+def workspaces(): return projects
+@app.post('/api/workspaces')
+def create_workspace(body: dict):
+    project = {"id": uuid4().hex[:8], "name": body["name"], "path": body.get("path") or "/tmp/fixture/" + body["name"]}
+    projects.append(project)
+    return project
+@app.get('/api/models')
+def models(agent_id: str):
+    doc = settings(agent_id)
+    return [{"provider_id": p["id"], "provider_name": p["name"], "model_id": m["id"], "model_name": m["name"], "vision": m.get("vision", False)} for p in doc["providers"] for m in p["models"]]
+@app.get('/api/models/settings/{agent_id}')
+def settings(agent_id: str):
+    return provider_documents.setdefault(agent_id, {"revision": "1", "providers": [{"id": "fixture", "name": "Fixture", "base_url": "http://127.0.0.1:9999/v1", "api": "openai-completions", "configured": False, "models": [{"id": "fixture-model", "name": "Fixture model", "vision": True}]}], "models": {}})
+@app.put('/api/models/settings/{agent_id}')
+def save_settings(agent_id: str, body: dict):
+    doc = settings(agent_id)
+    if doc["revision"] != body["revision"]: raise HTTPException(409, "Settings changed elsewhere")
+    for pid, values in body["patch"].get("providers", {}).items():
+        entry = next((p for p in doc["providers"] if p["id"] == pid), None)
+        if entry is None:
+            entry = {"id": pid, "models": []}; doc["providers"].append(entry)
+        entry.update({k: v for k, v in values.items() if k != "api_key"})
+        if values.get("api_key"): entry["configured"] = True
+    doc["models"].update(body["patch"].get("models", {}))
+    doc["revision"] = str(int(doc["revision"]) + 1)
+    return doc
 @app.get('/api/sessions')
 def list_sessions(): return [info(s) for s in sessions.values()]
 @app.post('/api/sessions')
@@ -28,6 +58,11 @@ def create(body: dict):
 def messages(sid: str, limit: int = 50, before: int | None = None):
     s=sessions[sid]; end=len(s['messages']) if before is None else before; start=max(0,end-limit)
     return {'items':s['messages'][start:end], 'before':start, 'has_more':start>0}
+@app.get('/api/sessions/{sid}/attachments/{aid}')
+def attachment(sid: str, aid: str):
+    if (sid, aid) not in attachment_bytes: raise HTTPException(404)
+    data, media = attachment_bytes[(sid, aid)]
+    return Response(data, media_type=media)
 @app.get('/api/sessions/{sid}/interactions')
 def interactions(sid: str): return sessions[sid]['interactions']
 @app.get('/test/stats/{sid}')
@@ -35,7 +70,10 @@ def stats(sid: str):
     s=sessions[sid]
     return {'commands':s['commands'], 'peers':len(s['peers'])}
 
-def message(s, role, content): s['messages'].append({'id':uuid4().hex,'role':role,'content':content})
+def message(s, role, content, attachments=()):
+    metadata = [{"id": uuid4().hex[:8], "name": a["name"], "media_type": a["media_type"], "size": len(base64.b64decode(a["data"], validate=True))} for a in attachments]
+    for a, m in zip(attachments, metadata): attachment_bytes[(s['id'], m['id'])] = (base64.b64decode(a['data']), a['media_type'])
+    s['messages'].append({'id':uuid4().hex,'role':role,'content':content, 'attachments':metadata})
 async def emit(s, kind, content='', remember=True):
     event={'type':kind,'content':content,'metadata':{'sequence':len(s['history'])}}
     if kind=='stream_start': s['history']=[]
@@ -64,9 +102,14 @@ async def socket(ws: WebSocket, sid: str):
             command=await ws.receive_json(); s['commands'].append(command)
             kind=command['type']
             if kind=='user_message':
-                content=command['content']; message(s,'user',content)
+                content=command['content']; message(s,'user',content, command.get('attachments', []))
                 await emit(s,'stream_start')
-                if content=='slow':
+                if s['agent_id']=='24r-autonomous-test':
+                    result = '## 今日总结\n自主分析完成：已结合心情、困难、进展和活动动线。'
+                    await emit(s,'stream_chunk','我先检查活动记录，再分析心情。')
+                    message(s,'assistant',result)
+                    await emit(s,'stream_end',result,remember=False)
+                elif content=='slow':
                     await emit(s,'stream_chunk','恢复前'); s['task']=asyncio.create_task(slow(s))
                 elif content=='interaction':
                     interaction={'id':'interaction-1','kind':'select','title':'选择服务','message':'请选择','questions':[{'id':'question-1','kind':'select','title':'服务','message':'翻译还是总结？','required':True,'multiple':False,'options':[{'id':'translate','label':'翻译'},{'id':'summary','label':'总结'}]}]}

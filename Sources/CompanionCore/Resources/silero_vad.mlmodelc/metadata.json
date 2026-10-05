@@ -1,0 +1,112 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Float16",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1)",
+        "shortDescription" : "",
+        "shape" : "[1]",
+        "name" : "probability",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 128)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 128]",
+        "name" : "h_out",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 128)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 128]",
+        "name" : "c_out",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 8,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios17.sqrt" : 1,
+      "Ios17.transpose" : 1,
+      "Ios17.conv" : 6,
+      "Ios16.sigmoid" : 1,
+      "Ios17.sliceByIndex" : 2,
+      "Ios17.add" : 2,
+      "Ios17.lstm" : 1,
+      "Ios16.relu" : 5,
+      "Ios17.pow" : 2,
+      "Ios17.expandDims" : 3,
+      "Ios17.squeeze" : 3,
+      "Ios17.reshape" : 1,
+      "Pad" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "14.0",
+      "tvOS" : "17.0",
+      "visionOS" : "1.0",
+      "watchOS" : "10.0",
+      "iOS" : "17.0",
+      "macCatalyst" : "17.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.source_dialect" : "TorchScript",
+      "com.github.apple.coremltools.version" : "8.3.0",
+      "com.github.apple.coremltools.source" : "torch==2.9.1"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 576)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 576]",
+        "name" : "audio",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 128)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 128]",
+        "name" : "h",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 128)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 128]",
+        "name" : "c",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "silero_vad",
+    "method" : "predict"
+  }
+]

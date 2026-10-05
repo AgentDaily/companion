@@ -7,6 +7,7 @@ import Foundation
     private var eventReader: Task<Void, Never>?
     private var socket: GatewayChannel?
     private var sessionID: String?
+    private var attachments = AttachmentBuffer()
     public init(gateway: URL, emit: @escaping @MainActor (RelayPacket) async throws -> Void) {
         self.gateway = GatewayClient(baseURL: gateway); self.emit = emit
     }
@@ -37,17 +38,31 @@ import Foundation
                     }
                 }
             }
+        case "attachment_reset", "attachment_begin", "attachment_chunk":
+            guard sessionID != nil, packet.sessionID == sessionID else { throw CompanionError.disconnected }
+            if packet.kind == "attachment_reset" { attachments.reset() }
+            else if packet.kind == "attachment_begin", let body = packet.body { try attachments.begin(JSONDecoder().decode(JSONValue.self, from: body)) }
+            else if packet.kind == "attachment_chunk", let id = packet.path, let body = packet.body { try attachments.append(id: id, data: body) }
+            else { throw CompanionError.invalidFrame }
         case "command":
             guard let socket, sessionID != nil, packet.sessionID == sessionID, let body = packet.body else { throw CompanionError.disconnected }
-            let value = try JSONDecoder().decode(JSONValue.self, from: body)
+            var value = try JSONDecoder().decode(JSONValue.self, from: body)
             guard ["user_message", "interrupt", "permission_response", "interaction_response", "pong"].contains(value["type"].text) else { throw CompanionError.server("未知会话操作。") }
-            try await socket.send(value)
+            if value["type"].text == "user_message", case .object(var command) = value {
+                if case .array(let ids) = command["attachment_ids"] {
+                    guard ids.allSatisfy({ !$0.text.isEmpty }) else { throw CompanionError.invalidFrame }
+                    command["attachments"] = .array(try attachments.payload(ids: ids.map(\.text)))
+                    command.removeValue(forKey: "attachment_ids"); value = .object(command)
+                }
+                defer { attachments.reset() }
+                try await socket.send(value)
+            } else { try await socket.send(value) }
         case "unwatch": unwatch()
         default: throw CompanionError.server("未知 Quenda 操作。")
         }
         return reply
     }
-    private func unwatch() { sessionID = nil; eventReader?.cancel(); eventReader = nil; socket?.close(); socket = nil }
+    private func unwatch() { attachments.reset(); sessionID = nil; eventReader?.cancel(); eventReader = nil; socket?.close(); socket = nil }
 }
 
 #if os(macOS)

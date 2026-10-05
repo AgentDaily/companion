@@ -10,7 +10,8 @@ let package = Package(
         .executable(name: "QuendaCompanionMac", targets: ["QuendaCompanionMac"]),
     ],
     targets: [
-        .target(name: "CompanionCore"),
+        .target(name: "CVAD", path: "Vendor/Libfvad", sources: ["src"], publicHeadersPath: "include"),
+        .target(name: "CompanionCore", dependencies: ["CVAD"], resources: [.copy("Resources/silero_vad.mlmodelc")]),
         .target(name: "CompanionUI", dependencies: ["CompanionCore"]),
         .executableTarget(name: "QuendaCompanionMac", dependencies: ["CompanionCore", "CompanionUI"]),
         .testTarget(name: "CompanionCoreTests", dependencies: ["CompanionCore", "CompanionUI"]),

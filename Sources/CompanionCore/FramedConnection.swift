@@ -63,8 +63,11 @@ public enum FrameCodec {
                         guard let self, !self.ended else { return }
                         switch state {
                         case .ready:
+                            ConnectionDiagnostics.shared.record("transport.ready", self.connection.currentPath?.availableInterfaces.map(\.name).joined(separator: ",") ?? "")
                             self.ready?.resume(); self.ready = nil; self.readHeader()
-                        case .failed(let error): self.close(error)
+                        case .waiting(let error): ConnectionDiagnostics.shared.record("transport.waiting", String(describing: error))
+                        case .failed(let error):
+                            ConnectionDiagnostics.shared.record("transport.failed", String(describing: error)); self.close(error)
                         case .cancelled: self.close(CompanionError.disconnected)
                         default: break
                         }
@@ -73,7 +76,10 @@ public enum FrameCodec {
                 connection.start(queue: .main)
                 Task { [weak self] in
                     try? await Task.sleep(for: .seconds(10))
-                    if let self, self.ready != nil { self.close(CompanionError.timeout) }
+                    if let self, self.ready != nil {
+                        ConnectionDiagnostics.shared.record("transport.handshake.timeout")
+                        self.close(CompanionError.timeout)
+                    }
                 }
             }
         }, onCancel: { Task { @MainActor [weak self] in self?.close(CancellationError()) } })

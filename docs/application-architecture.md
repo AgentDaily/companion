@@ -32,4 +32,21 @@ Quenda 设置使用 `app.quenda.*` 的 UserDefaults 命名空间，旧 `gateway`
 
 当前是随 Companion 编译发布的内置应用架构，不涉及运行时下载或执行第三方插件。应用描述来自 Mac 的注册表，目录包含已启用和未启用应用。
 
-录音转录尚未实现。未来应先在手机持久化录音分段，通过应用消息传递分段 ID、校验值和确认状态，再由 Mac 本地 ASR 执行；4 MiB 帧上限仍适用，大文件需分段。业务完成确认、断点续传和录音后台权限属于该应用，不能把通用 RPC 转发成功当作录音持久化成功。
+Whisper Anywhere 手机麦克风输入法已接入，音频不持久化，仅明确结束才提交光标输入。全天录音笔记尚未实现；该应用未来应先在手机持久化录音分段，通过应用消息传递分段 ID、校验值和确认状态，再由 Mac 本地 ASR 执行；4 MiB 帧上限仍适用，大文件需分段。业务完成确认、断点续传和录音后台权限属于该应用，不能把通用 RPC 转发成功当作录音持久化成功。
+
+
+## Whisper Anywhere
+
+`VoiceInputView`/`PhoneMicrophone` 负责 iPhone 前台录音、16 kHz 单声道 PCM16、系统语音处理以及逐块确认；缓冲上限 24 个 160 ms 音频块。`VoiceCommand` 带 utterance UUID 和 sequence，丢块、乱序、空录音、超时会取消。`VoiceInputApplicationSession` 持有单个认证端的会话所有权，调用 `VoiceInputEngine`，只有一次明确 finish 可以提交结果。默认 cursor 模式输入 Mac 光标，回复没有转写正文；显式 draft 模式通过 VoiceTranscriptionEngine 返回文字，仅供 Quenda 填入草稿。
+
+Mac Companion 的 `WhisperProxySession` 通过回环 TLS 服务连接独立 Whisper Anywhere。后者复用现有 Nemotron 本地模型、非激活浮层和 TextInjector。电脑快捷键输入与手机输入互斥，取消会丢弃 ASR 会话；结束前检查电脑前台应用与开始时一致。服务端点只存非敏感元数据，PSK 使用钥匙串。
+
+RelayPeer 在按应用排队处理 RPC 的同时继续读取网络消息，所以 TCP 断线不需要等待耗时 ASR 结束。`application_close` 立即取消对应应用排队任务并关闭该应用会话，保留其它应用与设备连接。应用取消与结束都不重放；finish 响应丢失时不能据此重试输入。
+
+## Quenda 语音草稿
+
+Quenda 的 iPhone 会话输入框复用 PhoneVoiceStore 和 PhoneMicrophone，通过共享 CompanionLink 调用 Whisper Anywhere。录音前先请求 destination=draft 的 status，并检查 supportsDraft=true；旧服务不会进入录音流程，避免意外输入到 Mac 光标。
+
+VoiceInputApplicationSession 在 start 时锁定 destination，audio/finish 必须与该模式一致。默认 cursor 仍保持不向手机返回正文；draft 只在成功完成 finish 后返回 VoiceStatus.transcript。Mac 的 VoiceTranscriptionEngine 不捕获输入目标、不注入文字，也不要求辅助功能权限；模型及语言沿用 Whisper Anywhere 配置。服务仍需在 Mac 启动，并在 Companion 中向手机开放。
+
+DraftVoiceInputView 在成功后追加到当前草稿，不发送 Quenda 消息。取消、进入后台、断线和切换连接会停止录音，残缺音频不返回文字。音频不保存到文件，识别正文只在草稿和运行时状态中使用，完成发送后才成为 Quenda 会话消息。
