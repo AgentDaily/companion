@@ -18,7 +18,7 @@ import Foundation
     }
     public func record(_ stage: String, _ detail: String = "") {
         entries.append(Entry(time: Date(), stage: stage, detail: detail))
-        entries = Array(entries.suffix(80))
+        entries = Array(entries.suffix(240))
         guard let file else { return }
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

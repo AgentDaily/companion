@@ -5,7 +5,7 @@ root = Path(__file__).resolve().parents[1]
 (root/'Apps/iOS/Info.plist').write_bytes(plistlib.dumps({
     'CFBundleDisplayName': 'Companion', 'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)',
     'CFBundleExecutable': '$(EXECUTABLE_NAME)', 'CFBundleName': '$(PRODUCT_NAME)',
-    'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.5.2', 'CFBundleVersion': '18',
+    'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.5.8', 'CFBundleVersion': '24',
     'CFBundleURLTypes': [{'CFBundleURLName': 'com.quenda.companion.pair', 'CFBundleURLSchemes': ['quenda-companion']}],
     'NSBonjourServices': ['_companion._tcp'],
     'NSLocalNetworkUsageDescription': '连接你的 Mac Companion，使用配对设备间的应用。'
@@ -16,7 +16,7 @@ root = Path(__file__).resolve().parents[1]
 (root/'Apps/macOS/Info.plist').write_bytes(plistlib.dumps({
     'CFBundleDisplayName': 'Companion', 'CFBundleIdentifier': 'com.quenda.companion.mac',
     'CFBundleExecutable': 'QuendaCompanionMac', 'CFBundleName': 'Companion', 'CFBundleIconFile': 'Companion', 'CFBundlePackageType': 'APPL',
-    'CFBundleShortVersionString': '0.5.2', 'CFBundleVersion': '18', 'LSMinimumSystemVersion': '14.0',
+    'CFBundleShortVersionString': '0.5.8', 'CFBundleVersion': '24', 'LSMinimumSystemVersion': '14.0',
     'NSHighResolutionCapable': True, 'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
     'NSBonjourServices': ['_companion._tcp'],
     'NSLocalNetworkUsageDescription': '连接本机 Quenda Gateway，并接受你配对的手机连接。',

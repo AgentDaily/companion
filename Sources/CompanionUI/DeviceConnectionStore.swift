@@ -16,32 +16,60 @@ import CompanionCore
     private var operation: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var suspended = false
+    private let savePairing: @MainActor (Pairing) throws -> Void
     private let makeLink: @MainActor (Pairing) -> CompanionLink
     public var connected: Bool { link != nil }
     public var connecting: Bool { operation != nil }
-    public init(pairing: Pairing? = nil, makeLink: @escaping @MainActor (Pairing) -> CompanionLink = { CompanionLink(pairing: $0) }) {
-        self.pairing = pairing; self.makeLink = makeLink
+    public init(pairing: Pairing? = nil, savePairing: @escaping @MainActor (Pairing) throws -> Void = { try CredentialStore.write($0.link, account: "phone-pairing") }, makeLink: @escaping @MainActor (Pairing) -> CompanionLink = { CompanionLink(pairing: $0) }) {
+        self.pairing = pairing; self.savePairing = savePairing; self.makeLink = makeLink
     }
     public func loadPairing() {
         do {
             if let saved = try CredentialStore.read("phone-pairing") { pairing = try Pairing(link: saved) }
         } catch { self.error = error.localizedDescription }
     }
+    public enum ReconnectReason: String { case manual, pairing, resume, refresh, recovery }
     public func pair(link: String) async throws {
         let credentials = try Pairing(link: link)
-        try CredentialStore.write(credentials.link, account: "phone-pairing")
+        let unchanged = pairing.map {
+            $0.host == credentials.host && $0.port == credentials.port && $0.key == credentials.key &&
+            $0.nearbyService?.lowercased() == credentials.nearbyService?.lowercased()
+        } ?? false
+        ConnectionDiagnostics.shared.record("device.pairing", unchanged ? "unchanged" : "changed")
+        if unchanged {
+            suspended = false
+            if let operation { await operation.value }
+            else if !connected { await reconnect(reason: .pairing) }
+            return
+        }
+        try savePairing(credentials)
         pairing = credentials; applications = []; suspended = false
-        await reconnect()
+        await reconnect(reason: .pairing)
     }
     public func resume() async {
         suspended = false
         guard !connected, operation == nil else { return }
-        await reconnect()
+        await reconnect(reason: .resume)
     }
-    public func reconnect() async {
+    /// Refresh application availability without discarding an authenticated device link.
+    public func refresh() async {
+        guard !suspended else { return }
+        if let operation { await operation.value; return }
+        guard let link else { await reconnect(reason: .refresh); return }
+        let token = attempt
+        do {
+            let applications = try await link.applications()
+            guard token == attempt, self.link === link, !suspended else { return }
+            self.applications = applications; error = nil
+        } catch {
+            guard token == attempt, self.link === link, !suspended else { return }
+            self.error = error.localizedDescription
+        }
+    }
+    public func reconnect(reason: ReconnectReason = .manual) async {
         retry?.cancel(); retry = nil
         guard !suspended, let pairing else { return }
-        ConnectionDiagnostics.shared.record("device.reconnect", "nearby=\(pairing.nearbyService != nil) remote=\(pairing.remoteHost != nil)")
+        ConnectionDiagnostics.shared.record("device.reconnect", "source=\(reason.rawValue) nearby=\(pairing.nearbyService != nil) remote=\(pairing.remoteHost != nil)")
         attempt += 1; let token = attempt
         operation?.cancel(); candidate?.onState = nil; candidate?.close(); link = nil; revision += 1
         state = pairing.nearbyService == nil ? .connectingRemote : .discovering; error = nil
@@ -73,6 +101,7 @@ import CompanionCore
                 try Task.checkCancellation()
                 guard attempt == token, !suspended else { candidate.close(); return }
                 self.applications = applications; link = candidate; revision += 1; error = nil
+                ConnectionDiagnostics.shared.record("device.catalog.ready", "count=\(applications.count)")
             } catch {
                 guard attempt == token, !suspended else { return }
                 self.error = error.localizedDescription; state = .disconnected; link = nil
@@ -95,7 +124,8 @@ import CompanionCore
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             guard let self, !self.suspended else { return }
             self.retry = nil
-            await self.reconnect()
+            guard !self.connected, self.operation == nil else { return }
+            await self.reconnect(reason: .recovery)
         }
     }
 }

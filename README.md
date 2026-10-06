@@ -11,7 +11,7 @@
 ![macOS](https://img.shields.io/badge/macOS-14%2B-181717?logo=apple)
 ![iOS](https://img.shields.io/badge/iOS-17%2B-181717?logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
-![Version](https://img.shields.io/badge/version-0.5.2-5B6EF5)
+![Version](https://img.shields.io/badge/version-0.5.8-5B6EF5)
 ![Stage](https://img.shields.io/badge/status-early%20development-5B6EF5)
 
 [快速开始](#快速开始) · [24R](#24r全天记录与一日回顾) · [安装说明](docs/getting-started.md) · [应用接入](docs/application-architecture.md) · [连接协议](docs/connection-protocol.md)
@@ -28,9 +28,9 @@ Companion 让个人应用从电脑延伸到手机。Mac 提供算力、文件和
 | **Whisper Anywhere** | 把 iPhone 当作 Mac 的麦克风，识别后输入到光标或 Quenda 草稿 | 兼容的独立 Whisper Anywhere App |
 | **24R** | 分段转写、小时摘要、情绪/场景标签、日报和待办，保存到自己的资料库 | Whisper Anywhere；整理可选 Ollama、云端模型或 Quenda Agent |
 
-当前版本 **0.5.2（build 18）**。应用随宿主编译发布，尚不支持动态安装第三方应用。
+当前版本 **0.5.8（build 24）**。应用随宿主编译发布，尚不支持动态安装第三方应用。
 
-> **连接状态说明：** 当前优先通过 Bonjour / Network framework 建立附近连接，可选 Tailscale 回退。附近连接可能走共同局域网，也可能走 Apple 点对点 Wi‑Fi。2026-10-05 的实机反馈仍存在“Mac 开着 Wi‑Fi，但未加入网络时连接失败”；0.5.2 增加了连接阶段与诊断记录，**尚未修复这一问题**。不能把“打开 Wi‑Fi 即可无网络直连”当作已验证能力。[排查进展](docs/nearby-connection-diagnostics.md)
+> **连接状态说明：** 同一局域网（包括 Mac 连接手机热点）与可选 Tailscale 回退可用。0.5.8 修复点对点发现请求过早释放导致的解析超时／掉线；真机 AWDL 对照中，修复后空闲 93 秒仍可请求目录，恢复旧行为则解析超时。测试明确排除了 USB 传输。完整无共同网络使用、全天后台与耗电仍需长期验收。[排查进展](docs/nearby-connection-diagnostics.md)
 
 ## 两端界面
 
@@ -192,7 +192,7 @@ conda run -n kora scripts/build-apps.sh
 
 `test.sh` 启动临时 Gateway fixture，验证聊天、权限、交互与重连，不调用真实模型。测试还覆盖 TLS、应用隔离、音频分段、离线队列、资料库双向更新、分析工作流与麦克风会话隔离。
 
-0.5.2 最近一次全量测试：**104 项，98 通过、6 项可选测试跳过**；Mac release、iPhone SDK 和签名设备构建通过。自动测试不代表真实无线、全天后台或耗电验收。
+0.5.8 最近一次全量测试：**118 项，112 通过、6 项可选测试跳过**；Mac release、iPhone SDK 和签名设备构建通过。自动测试不代表真实无线、全天后台或耗电验收。
 
 ```text
 Sources/

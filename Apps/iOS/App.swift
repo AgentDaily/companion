@@ -3,22 +3,36 @@ import CompanionCore
 import CompanionUI
 
 @main struct QuendaCompanionApp: App {
-    init() { ConnectionDiagnostics.shared = .persisted() }
+    init() {
+        ConnectionDiagnostics.shared = .persisted()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        ConnectionDiagnostics.shared.record("app.start", "version=\(version) build=\(build)")
+    }
     @StateObject private var connection = DeviceConnectionStore()
     @StateObject private var quenda = QuendaStore()
     @StateObject private var configuration = QuendaConfiguration()
     @StateObject private var dayRecord = DayRecordPhoneStore()
     @Environment(\.scenePhase) private var scenePhase
     @State private var settings = false
+    #if DEBUG
+    @State private var diagnosticRunning = false
+    #endif
     var body: some Scene {
         WindowGroup {
             PhoneHome(connection: connection, quenda: quenda, configuration: configuration, dayRecord: dayRecord, settings: $settings)
                 .task {
+                    #if DEBUG
+                    if Self.diagnosticMode != nil { await runWirelessDiagnostic(); return }
+                    #endif
                     connection.loadPairing()
                     if connection.pairing == nil { settings = true }
                     else { await connection.resume() }
                 }
                 .task(id: connection.revision) {
+                    #if DEBUG
+                    if Self.diagnosticMode != nil { return }
+                    #endif
                     dayRecord.attach(link: connection.link)
                     guard connection.link != nil else { return }
                     await dayRecord.store.refresh(allDays: true)
@@ -37,11 +51,59 @@ import CompanionUI
                     }
                 }
                 .onChange(of: scenePhase) { _, phase in
+                    #if DEBUG
+                    if Self.diagnosticMode != nil {
+                        ConnectionDiagnostics.shared.record("debug.awdl.scene", String(describing: phase))
+                        if phase == .active && diagnosticRunning { UIApplication.shared.isIdleTimerDisabled = true }
+                        if phase == .background {
+                            ConnectionDiagnostics.shared.record("debug.awdl.interrupted", "background; result is inconclusive")
+                            UIApplication.shared.isIdleTimerDisabled = false
+                            connection.suspend()
+                        }
+                        return
+                    }
+                    #endif
                     if phase == .active { Task { await connection.resume() } }
                     if phase == .background { quenda.disconnect(); if !dayRecord.running { connection.suspend() } }
                 }
         }
     }
+    #if DEBUG
+    // USB is used only for launching and collecting logs; discovery is AWDL-only.
+    // Opt-in, bounded physical diagnostic. Normal app launches never enter this path.
+    private static var diagnosticMode: String? {
+        guard ProcessInfo.processInfo.environment["COMPANION_DIAGNOSTIC_AWDL_ONLY"] == "1" else { return nil }
+        return ProcessInfo.processInfo.environment["COMPANION_DIAGNOSTIC_TRAFFIC"] == "1" ? "traffic" : "idle"
+    }
+    @MainActor private func runWirelessDiagnostic() async {
+        guard let mode = Self.diagnosticMode else { return }
+        diagnosticRunning = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { diagnosticRunning = false; UIApplication.shared.isIdleTimerDisabled = false; connection.suspend() }
+        ConnectionDiagnostics.shared.record("debug.awdl.start", "mode=\(mode) run=\(ProcessInfo.processInfo.environment["COMPANION_DIAGNOSTIC_RUN"] ?? "manual")")
+        connection.loadPairing()
+        await connection.resume()
+        guard let link = connection.link else {
+            ConnectionDiagnostics.shared.record("debug.awdl.result", "FAIL initial connection"); return
+        }
+        let started = Date()
+        do {
+            for _ in 0..<18 {
+                try await Task.sleep(for: .seconds(5))
+                guard connection.link === link else { throw CompanionError.disconnected }
+                if mode == "traffic" {
+                    let apps = try await link.applications()
+                    ConnectionDiagnostics.shared.record("debug.awdl.reply", "count=\(apps.count)")
+                }
+            }
+            let apps = try await link.applications()
+            ConnectionDiagnostics.shared.record("debug.awdl.result", "PASS seconds=\(Int(Date().timeIntervalSince(started))) count=\(apps.count)")
+        } catch {
+            ConnectionDiagnostics.shared.record("debug.awdl.result", "FAIL seconds=\(Int(Date().timeIntervalSince(started))) errorType=\(String(describing: type(of: error)))")
+        }
+    }
+    #endif
+
 }
 
 private enum PhoneRoute: Hashable { case application(String), conversation(String) }
@@ -85,7 +147,7 @@ private struct PhoneHome: View {
                 Section { Text("每个应用有独立设置，设备配对与连接由 Companion 共用。").font(.caption).foregroundStyle(.secondary) }
             }.navigationTitle("Companion")
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button { settings = true } label: { Image(systemName: "network") }.accessibilityLabel("设备连接与配对") } }
-            .refreshable { await connection.reconnect() }
+            .refreshable { await connection.refresh() }
             .navigationDestination(for: PhoneRoute.self) { route in
                 switch route {
                 case .application("24r"):
@@ -192,18 +254,20 @@ private struct DevicePairingView: View {
                 if let pairing = connection.pairing {
                     Section("当前连接") {
                         Text(connection.state.title)
-                        Text(pairing.nearbyService == nil ? "此配对仅含远程地址。重新扫描 Mac 的二维码可启用附近优先。" : pairing.remoteHost == nil ? "附近点对点 Wi-Fi" : "附近优先 · Tailscale 回退")
+                        Text(pairing.nearbyService == nil ? "此配对仅含远程地址。重新扫描 Mac 的二维码可启用附近优先。" : pairing.remoteHost == nil ? "附近连接" : "附近优先 · Tailscale 回退")
                             .font(.caption).foregroundStyle(.secondary)
                         Button("重新连接 Mac") { Task { await connection.reconnect() } }.disabled(connection.connecting || saving)
                     }
                 }
                 if let error = connection.error { Section { Text(error).foregroundStyle(.red) } }
                 Section("连接诊断") {
+                    Text("版本 \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")（\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—")）")
+                        .font(.caption).foregroundStyle(.secondary)
                     ShareLink("分享最近的连接记录", item: ConnectionDiagnostics.shared.summary)
                     Text("只包含发现、连接阶段和网络错误，不包含配对密钥、录音或对话内容。").font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
-                    Text("附近连接无需热点，开启 Wi-Fi 并允许本地网络访问即可。远程连接需要两台设备连接 Tailscale。配对信息保存在 iPhone 钥匙串。")
+                    Text("附近连接请开启 Wi-Fi 并允许本地网络访问。目前建议两台设备接入同一局域网；无共同网络的直连仍在修复。远程连接需要两台设备连接 Tailscale。配对信息保存在 iPhone 钥匙串。")
                     Text("24R 记录期间保持音频会话与设备连接；其他情况下切到后台暂停连接，回到 App 恢复。")
                 }
             }.navigationTitle("设备连接与配对").toolbar { Button("完成") { dismiss() } }

@@ -20,7 +20,8 @@ public enum CompanionConnectionState: Equatable, Sendable {
 /// may fall back to another transport; application requests are never replayed.
 @MainActor public final class CompanionLink {
     private let pairing: Pairing
-    private let resolve: @MainActor (String) async throws -> NWEndpoint
+    private let resolve: (@MainActor (String) async throws -> NWEndpoint)?
+    private var discoverySession: NearbyDiscoverySession?
     private var channel: FramedConnection?
     private var discoveryTask: Task<NWEndpoint, Error>?
     private var connectTask: Task<Void, Error>?
@@ -35,7 +36,7 @@ public enum CompanionConnectionState: Equatable, Sendable {
     public private(set) var state = CompanionConnectionState.disconnected
     public var onApplicationsChanged: ((String?) -> Void)?
     public var onState: ((CompanionConnectionState) -> Void)?
-    public init(pairing: Pairing, resolve: @escaping @MainActor (String) async throws -> NWEndpoint = { try await NearbyDiscovery.resolve(service: $0) }) {
+    public init(pairing: Pairing, resolve: (@MainActor (String) async throws -> NWEndpoint)? = nil) {
         self.pairing = pairing; self.resolve = resolve
     }
     public func connect() async throws {
@@ -56,15 +57,31 @@ public enum CompanionConnectionState: Equatable, Sendable {
             if let service = pairing.nearbyService {
                 do {
                     update(.discovering)
-                    let search = Task { try await resolve(service) }; discoveryTask = search
+                    let search: Task<NWEndpoint, Error>
+                    if let resolve { search = Task { try await resolve(service) } }
+                    else {
+                        let discovery = NearbyDiscoverySession(service: service)
+                        discoverySession = discovery
+                        search = Task { try await discovery.resolve() }
+                    }
+                    discoveryTask = search
                     let endpoint = try await search.value; discoveryTask = nil
+                    #if DEBUG
+                    // Physical A/B control: reproduce the pre-fix lifetime without
+                    // changing routing, pairing or the production defaults.
+                    if ProcessInfo.processInfo.environment["COMPANION_DIAGNOSTIC_DROP_DISCOVERY"] == "1" {
+                        releaseDiscovery()
+                    }
+                    #endif
                     try Task.checkCancellation(); guard !closed else { throw CompanionError.disconnected }
                     let nearby = try FramedConnection(endpoint: endpoint, key: pairing.key); channel = nearby
                     update(.connectingNearby)
                     try await nearby.start()
+                    if !nearby.needsNearbyDiscovery { releaseDiscovery() }
                     update(.connected(.nearby))
                 } catch {
                     discoveryTask?.cancel(); discoveryTask = nil
+                    releaseDiscovery()
                     channel?.close(); channel = nil
                     try Task.checkCancellation(); guard !closed else { throw CompanionError.disconnected }
                     guard pairing.remoteHost != nil else { throw error }
@@ -135,9 +152,13 @@ public enum CompanionConnectionState: Equatable, Sendable {
         guard !closed else { return }; closed = true
         connectTask?.cancel(); discoveryTask?.cancel(); discoveryTask = nil
         reader?.cancel(); reader = nil; channel?.close(error); channel = nil
+        releaseDiscovery()
         let waits = pending.values; pending.removeAll(); waits.forEach { $0.wait.resume(throwing: error) }
         let streams = subscribers.values; subscribers.removeAll(); streams.forEach { $0.1.finish(throwing: error) }
         update(.disconnected)
+    }
+    private func releaseDiscovery() {
+        discoverySession?.cancel(); discoverySession = nil
     }
     private func update(_ state: CompanionConnectionState) {
         self.state = state
